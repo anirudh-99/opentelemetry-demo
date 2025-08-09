@@ -1,0 +1,176 @@
+# Default values for my-chart.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+
+# This is to override the chart name.
+nameOverride: ""
+fullnameOverride: ""
+
+producer:
+  name: my-producer
+  image:
+    repository: producer-image
+    tag: latest
+  port: 8080
+  replicas: 1
+
+consumer:
+  name: my-consumer
+  image:
+    repository: consumer-image
+    tag: latest
+  port: 8081
+  replicas: 1
+
+#--------Sub charts configurations---------
+
+opentelemetry-collector:
+
+  mode: deployment
+  image:  
+    repository: otel/opentelemetry-collector-contrib
+    tag: 0.131.1-arm64
+
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'kubernetes-pods'
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                # Keep pods with the "prometheus.io/scrape: true" annotation
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: true
+
+                # Set the metrics path from annotation, defaulting to /metrics
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+
+                # Replace target address with the pod's IP and port
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  target_label: __address__
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $1:$2
+
+    processors:
+      batch:
+        timeout: 5s
+      k8sattributes:
+        auth_type: serviceAccount
+        extract:
+          metadata: 
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.start_time
+            - k8s.pod.uid
+            - k8s.deployment.name
+            - k8s.node.name
+
+    exporters:
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+      otlphttp:
+        endpoint: "http://{{ .Release.Name }}-jaeger-collector:4318"
+      debug: {}
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [k8sattributes, batch]
+          exporters: [otlphttp, debug]
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [k8sattributes, batch]
+          exporters: [prometheus, debug]
+
+jaeger:
+  allInOne:
+    enabled: true
+  storage:
+    type: memory
+  agent:
+    enabled: false
+  collector:
+    enabled: false
+  query:
+    enabled: false
+  provisionDataStore:
+    cassandra: false
+
+prometheus:
+  server:
+    persistentVolume:
+      enabled: false
+    extraScrapeConfigs: |
+      - job_name: 'otel-collector-metrics'
+        scrape_interval: 15s
+        static_configs: 
+          - targets: ['{{ .Release.Name }}-opentelemetry-collector:8889']
+        relabel_configs:
+          - source_labels: [__address__]
+            regex: '(.*)8889'
+            target_label: instance
+            replacement: '$1'
+  alertmanager:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+
+grafana:
+  persistent:
+    enabled: false
+  adminPassword: admin
+  
+  grafana.ini:
+    auth.ldap:
+      enabled: false
+  
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://{{ .Release.Name }}-prometheus-server:80
+          isDefault: true
+          version: 1
+          editable: false
+          jsonData:
+            httpMethod: POST
+            manageAlerts: true
+            prometheusType: Prometheus
+            prometheusVersion: 2.44.0
+            cacheLevel: 'High'
+            disableRecordingRules: false
+            incrementalQueryOverlapWindow: 10m
+            exemplarTraceIdDestinations:
+              - datasourceUid: jaeger_uid
+                name: traceId
+                url: "http://localhost:3000"
+        - name: Jaeger
+          type: jaeger
+          access: proxy
+          url: http://{{ .Release.Name }}-jaeger-query:16686
+          isDefault: false
+          version: 1
+          editable: false
+          uid: jaeger_uid

@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.consumer.name }}
+spec:
+  replicas: {{ .Values.consumer.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.consumer.name }}
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8081"
+      labels:
+        app: {{ .Values.consumer.name }}
+    spec:
+      containers:
+      - name: {{ .Values.consumer.name }}
+        image: "{{ .Values.consumer.image.repository }}:{{ .Values.consumer.image.tag }}"
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "http://{{ .Release.Name }}-opentelemetry-collector:4317"
+
+          - name: OTEL_SERVICE_NAME
+            value: {{ .Values.consumer.name }}
+          
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: "grpc"
+        ports:
+        - containerPort: {{ .Values.consumer.port }}

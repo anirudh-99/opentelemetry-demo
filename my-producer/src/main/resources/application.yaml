@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: demo
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  endpoint:
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+
+otel:
+  service:
+    name: producer-service
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
